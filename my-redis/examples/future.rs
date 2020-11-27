@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::thread;
 use std::time::{Duration, Instant};
 
 struct Delay {
@@ -15,8 +16,16 @@ impl Future for Delay {
             println!("時は来た");
             Poll::Ready("done")
         } else {
-            cx.waker().wake_by_ref();
-            println!("時を待っている");
+            let waker = cx.waker().clone();
+            let when = self.when;
+            thread::spawn(move || {
+                println!("時を待っている");
+                let now = Instant::now();
+                if now < when {
+                    thread::sleep(when - now);
+                }
+                waker.wake();
+            });
             Poll::Pending
         }
     }
@@ -40,21 +49,17 @@ impl Future for MainFuture {
                     let future = Delay { when };
                     *self = Running(future);
                 }
-                Running(ref mut delay) => {
-                    match Pin::new(delay).poll(cx) {
-                        Poll::Ready(out) => {
-                            assert_eq!(out, "done");
-                            *self = Terminated;
-                            return Poll::Ready(());
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
+                Running(ref mut delay) => match Pin::new(delay).poll(cx) {
+                    Poll::Ready(out) => {
+                        assert_eq!(out, "done");
+                        *self = Terminated;
+                        return Poll::Ready(());
                     }
-                }
-                Terminated => {
-                    panic!("future polled after completion")
-                }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
+                },
+                Terminated => panic!("future polled after completion"),
             }
         }
     }
