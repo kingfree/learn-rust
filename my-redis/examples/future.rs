@@ -22,10 +22,46 @@ impl Future for Delay {
     }
 }
 
+enum MainFuture {
+    Init,
+    Running(Delay),
+    Terminated,
+}
+
+impl Future for MainFuture {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        use MainFuture::*;
+        loop {
+            match *self {
+                Init => {
+                    let when = Instant::now() + Duration::from_millis(10);
+                    let future = Delay { when };
+                    *self = Running(future);
+                }
+                Running(ref mut delay) => {
+                    match Pin::new(delay).poll(cx) {
+                        Poll::Ready(out) => {
+                            assert_eq!(out, "done");
+                            *self = Terminated;
+                            return Poll::Ready(());
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                    }
+                }
+                Terminated => {
+                    panic!("future polled after completion")
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let when = Instant::now() + Duration::from_millis(10);
-    let future = Delay { when };
-    let out = future.await;
-    assert_eq!(out, "done");
+    let future = MainFuture::Init;
+    future.await;
 }
